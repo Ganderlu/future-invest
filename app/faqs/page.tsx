@@ -19,7 +19,7 @@ export default function FaqsPage() {
             Frequently Asked Questions
           </p>
           <h1 className="mt-4 text-balance text-3xl font-semibold tracking-tight text-slate-50 sm:text-4xl lg:text-5xl">
-            Answers to common questions about how FutureInvest works.
+            Answers to common questions about how FutureInvest works!.
           </h1>
           <p className="mt-4 max-w-2xl text-sm leading-relaxed text-slate-300 sm:text-base">
             If you do not see your question here, our advisory team is happy to

@@ -28,7 +28,6 @@ export function CryptoMarketTable() {
         enableFutures: false,
         enableCrypto: true,
         showToolbar: false,
-        colorTheme: "dark",
       });
       containerRef.current.appendChild(script);
     }
