@@ -1,9 +1,15 @@
 import Link from "next/link";
 import Image from "next/image";
+import { CryptoTicker } from "@/components/crypto-ticker";
+import { CryptoMarketTable } from "@/components/crypto-market-table";
+import { CryptoLiveChart } from "@/components/crypto-live-chart";
 
 export default function Home() {
   return (
     <div className="bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950">
+      <div className="w-full border-b border-white/5 bg-slate-950">
+        <CryptoTicker />
+      </div>
       <main className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-6xl flex-col gap-24 px-6 py-16 md:py-24">
         <section className="grid items-center gap-12 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
           <div>
@@ -156,6 +162,13 @@ export default function Home() {
               </p>
             </div>
           </div>
+        </section>
+
+        <section className="rounded-3xl border border-white/5 bg-slate-950/60 p-6 sm:p-10">
+          <h2 className="mb-8 text-2xl font-semibold tracking-tight text-slate-50 sm:text-3xl">
+            Market Overview
+          </h2>
+          <CryptoMarketTable />
         </section>
 
         <section
@@ -350,6 +363,13 @@ export default function Home() {
               </a>
             </div>
           </div>
+        </section>
+
+        <section className="rounded-3xl border border-white/5 bg-slate-950/60 p-6 sm:p-10">
+          <h2 className="mb-8 text-2xl font-semibold tracking-tight text-slate-50 sm:text-3xl">
+            Live Market Chart
+          </h2>
+          <CryptoLiveChart />
         </section>
 
         <section
