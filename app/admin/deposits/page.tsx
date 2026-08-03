@@ -205,11 +205,47 @@ export default function AdminDepositsPage() {
     }).format(date);
   };
 
-  const formatCurrency = (amount: number, currency: string) => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: currency || "USD",
-    }).format(amount);
+  const VALID_ISO_CURRENCIES = new Set([
+    "USD",
+    "EUR",
+    "GBP",
+    "JPY",
+    "CAD",
+    "AUD",
+    "CHF",
+    "CNY",
+    "INR",
+    "NGN",
+    "KRW",
+    "BRL",
+  ]);
+
+  const formatCurrency = (amount: number, currency?: string) => {
+    const numericAmount =
+      typeof amount === "number" && !isNaN(amount) ? amount : 0;
+
+    let displayCurrency = "USD";
+    if (
+      currency &&
+      typeof currency === "string" &&
+      VALID_ISO_CURRENCIES.has(currency.toUpperCase())
+    ) {
+      displayCurrency = currency.toUpperCase();
+    }
+
+    try {
+      return new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: displayCurrency,
+      }).format(numericAmount);
+    } catch (err) {
+      console.warn("formatCurrency fallback:", err);
+      const formatted = numericAmount.toLocaleString("en-US", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+      return displayCurrency === "USD" ? `$${formatted}` : `${displayCurrency} ${formatted}`;
+    }
   };
 
   if (loading) {
