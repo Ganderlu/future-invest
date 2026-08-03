@@ -28,6 +28,13 @@ import { QRCodeSVG } from "qrcode.react";
 
 // Mock wallet addresses removed - fetching from Firestore
 
+const CURRENCY_NAMES: Record<string, string> = {
+  BTC: "Bitcoin",
+  ETH: "Ethereum",
+  USDT: "Tether (TRC20)",
+  USDT_BEP20: "USDT (BEP20)",
+};
+
 type UserProfile = {
   firstName?: string;
   lastName?: string;
@@ -45,7 +52,7 @@ export default function DepositPage() {
   // Form State
   const [amount, setAmount] = useState("");
   const [selectedCurrency, setSelectedCurrency] = useState<
-    "BTC" | "ETH" | "USDT"
+    "BTC" | "ETH" | "USDT" | "USDT_BEP20"
   >("BTC");
   const [step, setStep] = useState<1 | 2 | 3>(1); // 1: Amount, 2: Payment, 3: Success
   const [txHash, setTxHash] = useState("");
@@ -57,7 +64,9 @@ export default function DepositPage() {
     BTC: "",
     ETH: "",
     USDT: "",
+    USDT_BEP20: "",
   });
+  const [walletsLoaded, setWalletsLoaded] = useState(false);
 
   useEffect(() => {
     const app = getFirebaseApp();
@@ -72,9 +81,14 @@ export default function DepositPage() {
             if (docSnapshot.exists()) {
               const data = docSnapshot.data();
               setWalletAddresses({
-                BTC: data.walletBTC || "",
-                ETH: data.walletETH || "",
-                USDT: data.walletUSDT || "",
+                BTC: data.walletBTC || data.wallet_BTC || "",
+                ETH: data.walletETH || data.wallet_ETH || "",
+                USDT: data.walletUSDT || data.wallet_USDT || "",
+                USDT_BEP20:
+                  data.walletUSDTBEP20 ||
+                  data.walletUSDT_BEP20 ||
+                  data.wallet_BEP20 ||
+                  "",
               });
             } else {
               // Fallback if settings not initialized
@@ -83,16 +97,20 @@ export default function DepositPage() {
                 BTC: "1J1RpsaG7BoQu6pmxQ2j2WC5H6zni6eUKh",
                 ETH: "0x031d48c14d06470edd37b8c23df4d179a855f48c",
                 USDT: "TAGehSxJe15bB81JmP7gnuHLJTwZGaWZ2K",
+                USDT_BEP20: "0x38EB26a05E5Eb8ED7EAa221BD8F43330eC6d72fD",
               });
             }
+            setWalletsLoaded(true);
           },
           (error) => {
             console.error("Error fetching settings:", error);
+            setWalletsLoaded(true);
           },
         );
         return unsubscribeSettings;
       } catch (error) {
         console.error("Error setting up settings listener:", error);
+        setWalletsLoaded(true);
         return () => {};
       }
     };
@@ -120,7 +138,15 @@ export default function DepositPage() {
   }, [router]);
 
   const handleCopyAddress = () => {
-    navigator.clipboard.writeText(walletAddresses[selectedCurrency]);
+    const targetWallet = walletAddresses[selectedCurrency];
+    if (
+      !targetWallet ||
+      typeof targetWallet !== "string" ||
+      targetWallet.trim() === ""
+    ) {
+      return;
+    }
+    navigator.clipboard.writeText(targetWallet);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -130,6 +156,21 @@ export default function DepositPage() {
       setError("Please enter a valid deposit amount.");
       return;
     }
+    if (!walletsLoaded) {
+      setError("Wallet addresses are still loading. Please wait a moment.");
+      return;
+    }
+    const targetWallet = walletAddresses[selectedCurrency];
+    if (
+      !targetWallet ||
+      typeof targetWallet !== "string" ||
+      targetWallet.trim() === ""
+    ) {
+      setError(
+        `Wallet address for ${CURRENCY_NAMES[selectedCurrency]} is not available. Please contact support.`,
+      );
+      return;
+    }
     setError("");
     setStep(2);
   };
@@ -137,6 +178,19 @@ export default function DepositPage() {
   const handleSubmitDeposit = async () => {
     if (!user) return;
     setError("");
+
+    const targetWallet = walletAddresses[selectedCurrency];
+    if (
+      !targetWallet ||
+      typeof targetWallet !== "string" ||
+      targetWallet.trim() === ""
+    ) {
+      setError(
+        `Wallet address for ${CURRENCY_NAMES[selectedCurrency]} is not available. Please refresh and try again.`,
+      );
+      return;
+    }
+
     setSubmitting(true);
 
     try {
@@ -145,12 +199,13 @@ export default function DepositPage() {
       // Create deposit record
       await addDoc(collection(db, "deposits"), {
         userId: user.uid,
-        userEmail: user.email,
-        amount: parseFloat(amount),
+        userEmail: user.email || "",
+        amount: parseFloat(amount) || 0,
         currency: selectedCurrency,
+        method: CURRENCY_NAMES[selectedCurrency] || selectedCurrency,
         status: "pending",
-        walletAddress: walletAddresses[selectedCurrency],
-        transactionHash: txHash || "Not provided",
+        walletAddress: targetWallet.trim(),
+        transactionHash: txHash ? txHash.trim() : "Not provided",
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -167,7 +222,7 @@ export default function DepositPage() {
     }
   };
 
-  if (loading) {
+  if (loading || !walletsLoaded) {
     return (
       <DashboardLayout>
         <div className="flex h-full items-center justify-center">
@@ -260,11 +315,16 @@ export default function DepositPage() {
                 <label className="mb-4 block text-sm font-medium text-slate-300">
                   Select Currency
                 </label>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
                   {[
                     { id: "BTC", name: "Bitcoin", icon: Bitcoin },
-                    { id: "ETH", name: "Ethereum", icon: Wallet }, // Using generic wallet icon for ETH if no specific one
+                    { id: "ETH", name: "Ethereum", icon: Wallet },
                     { id: "USDT", name: "Tether (TRC20)", icon: DollarSign },
+                    {
+                      id: "USDT_BEP20",
+                      name: "USDT (BEP20)",
+                      icon: DollarSign,
+                    },
                   ].map((currency) => (
                     <button
                       key={currency.id}
@@ -325,9 +385,9 @@ export default function DepositPage() {
                   <p className="text-sm">
                     Please send exactly{" "}
                     <strong>${parseFloat(amount).toFixed(2)}</strong> worth of{" "}
-                    <strong>{selectedCurrency}</strong> to the address below.
-                    Ensure you are using the correct network to avoid loss of
-                    funds.
+                    <strong>{CURRENCY_NAMES[selectedCurrency]}</strong> to the
+                    address below. Ensure you are using the correct network to
+                    avoid loss of funds.
                   </p>
                 </div>
               </div>
@@ -335,7 +395,13 @@ export default function DepositPage() {
               <div className="flex flex-col items-center justify-center gap-6 rounded-2xl bg-slate-950 p-8 text-center">
                 <div className="flex h-48 w-48 items-center justify-center rounded-xl bg-white p-2">
                   <QRCodeSVG
-                    value={walletAddresses[selectedCurrency] || "Loading..."}
+                    value={
+                      walletAddresses[selectedCurrency] &&
+                      typeof walletAddresses[selectedCurrency] === "string" &&
+                      walletAddresses[selectedCurrency].trim() !== ""
+                        ? walletAddresses[selectedCurrency]
+                        : "NO_ADDRESS_AVAILABLE"
+                    }
                     size={170}
                     level="H"
                     includeMargin={false}
@@ -344,15 +410,21 @@ export default function DepositPage() {
 
                 <div className="w-full max-w-md">
                   <p className="mb-2 text-sm font-medium text-slate-400">
-                    {selectedCurrency} Wallet Address
+                    {CURRENCY_NAMES[selectedCurrency]} Wallet Address
                   </p>
                   <div className="relative flex items-center rounded-xl border border-white/10 bg-slate-900 p-1 pr-1">
                     <code className="flex-1 overflow-x-auto px-4 py-3 text-sm font-mono text-emerald-400">
-                      {walletAddresses[selectedCurrency]}
+                      {walletAddresses[selectedCurrency] ||
+                        "Address not available"}
                     </code>
                     <button
                       onClick={handleCopyAddress}
-                      className="rounded-lg bg-slate-800 p-2 text-slate-400 hover:bg-slate-700 hover:text-white"
+                      disabled={
+                        !walletAddresses[selectedCurrency] ||
+                        typeof walletAddresses[selectedCurrency] !== "string" ||
+                        walletAddresses[selectedCurrency].trim() === ""
+                      }
+                      className="rounded-lg bg-slate-800 p-2 text-slate-400 hover:bg-slate-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
                       title="Copy Address"
                     >
                       {copied ? (
@@ -408,9 +480,9 @@ export default function DepositPage() {
               <p className="mt-4 max-w-md text-slate-400">
                 Your deposit request for{" "}
                 <strong>${parseFloat(amount).toFixed(2)}</strong> via{" "}
-                <strong>{selectedCurrency}</strong> has been received. Your
-                balance will be updated once the transaction is confirmed on the
-                blockchain.
+                <strong>{CURRENCY_NAMES[selectedCurrency]}</strong> has been
+                received. Your balance will be updated once the transaction is
+                confirmed on the blockchain.
               </p>
 
               <div className="mt-8 flex gap-4">

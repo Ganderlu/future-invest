@@ -40,6 +40,13 @@ type DepositRequest = {
   userEmail?: string; // We'll fetch this separately
 };
 
+const CURRENCY_NAMES: Record<string, string> = {
+  BTC: "Bitcoin",
+  ETH: "Ethereum",
+  USDT: "Tether (TRC20)",
+  USDT_BEP20: "USDT (BEP20)",
+};
+
 export default function AdminDepositsPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -295,8 +302,10 @@ export default function AdminDepositsPage() {
                       <td className="whitespace-nowrap px-6 py-4 font-bold text-emerald-400">
                         {formatCurrency(deposit.amount, deposit.currency)}
                       </td>
-                      <td className="whitespace-nowrap px-6 py-4 capitalize">
-                        {deposit.method}
+                      <td className="whitespace-nowrap px-6 py-4">
+                        {deposit.method ||
+                          CURRENCY_NAMES[deposit.currency] ||
+                          deposit.currency}
                       </td>
                       <td className="whitespace-nowrap px-6 py-4">
                         {formatDate(deposit.createdAt)}
