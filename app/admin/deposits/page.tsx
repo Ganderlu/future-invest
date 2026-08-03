@@ -15,6 +15,7 @@ import {
   runTransaction,
   getDoc,
   increment,
+  onSnapshot,
 } from "firebase/firestore";
 import { getFirebaseApp, getFirebaseFirestore } from "@/lib/firebaseClient";
 import AdminLayout from "@/components/admin-layout";
@@ -26,6 +27,7 @@ import {
   Clock,
   Filter,
   AlertCircle,
+  RefreshCw,
 } from "lucide-react";
 
 type DepositRequest = {
@@ -53,11 +55,76 @@ export default function AdminDepositsPage() {
   const [deposits, setDeposits] = useState<DepositRequest[]>([]);
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const buildAndSetDeposits = async (
+    docs: Array<{ id: string; data: any }>,
+  ) => {
+    const db = getFirebaseFirestore();
+    const depositsData = await Promise.all(
+      docs.map(async (depositDoc) => {
+        const data = depositDoc.data;
+        let userEmail = "Unknown";
+
+        try {
+          if (data.userId) {
+            const userDoc = await getDoc(doc(db, "users", data.userId));
+            if (userDoc.exists()) {
+              userEmail = userDoc.data().email || "Unknown";
+            }
+          }
+        } catch (e) {
+          console.error("Error fetching user email", e);
+        }
+
+        const createdAtFallback = data.createdAt
+          ? data.createdAt
+          : Timestamp.now();
+
+        return {
+          id: depositDoc.id,
+          userId: data.userId || "",
+          amount:
+            typeof data.amount === "number" && !isNaN(data.amount)
+              ? data.amount
+              : 0,
+          currency: data.currency || "USD",
+          method: data.method || "",
+          status:
+            data.status === "approved" ||
+            data.status === "rejected" ||
+            data.status === "pending"
+              ? data.status
+              : ("pending" as const),
+          createdAt: createdAtFallback,
+          updatedAt: data.updatedAt || createdAtFallback,
+          processedAt: data.processedAt,
+          walletAddress: data.walletAddress || "",
+          transactionHash: data.transactionHash || "",
+          proofUrl: data.proofUrl,
+          userEmail,
+        } as DepositRequest;
+      }),
+    );
+
+    depositsData.sort((a, b) => {
+      const aTs = a.createdAt?.toDate
+        ? a.createdAt.toDate().getTime()
+        : new Date(a.createdAt || 0).getTime();
+      const bTs = b.createdAt?.toDate
+        ? b.createdAt.toDate().getTime()
+        : new Date(b.createdAt || 0).getTime();
+      return bTs - aTs;
+    });
+
+    setDeposits(depositsData);
+  };
 
   useEffect(() => {
     const app = getFirebaseApp();
     const auth = getAuth(app);
     const db = getFirebaseFirestore();
+    let depositsUnsubscribe: (() => void) | null = null;
 
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (!currentUser) {
@@ -70,43 +137,64 @@ export default function AdminDepositsPage() {
           collection(db, "deposits"),
           orderBy("createdAt", "desc"),
         );
-        const snapshot = await getDocs(depositsQuery);
 
-        // Fetch user emails for each deposit
-        const depositsData = await Promise.all(
-          snapshot.docs.map(async (depositDoc) => {
-            const data = depositDoc.data();
-            let userEmail = "Unknown";
-
+        let firstLoadDone = false;
+        depositsUnsubscribe = onSnapshot(
+          depositsQuery,
+          async (snapshot) => {
             try {
-              if (data.userId) {
-                const userDoc = await getDoc(doc(db, "users", data.userId));
-                if (userDoc.exists()) {
-                  userEmail = userDoc.data().email;
-                }
+              const docs = snapshot.docs.map((d) => ({
+                id: d.id,
+                data: d.data(),
+              }));
+              await buildAndSetDeposits(docs);
+            } catch (err) {
+              console.error("Error processing deposits snapshot:", err);
+            } finally {
+              if (!firstLoadDone) {
+                firstLoadDone = true;
+                setLoading(false);
               }
-            } catch (e) {
-              console.error("Error fetching user email", e);
+              setRefreshing(false);
             }
-
-            return {
-              id: depositDoc.id,
-              ...data,
-              userEmail,
-            } as DepositRequest;
-          }),
+          },
+          (err) => {
+            console.error("Error listening to deposits:", err);
+            setLoading(false);
+            setRefreshing(false);
+          },
         );
-
-        setDeposits(depositsData);
       } catch (error) {
-        console.error("Error fetching deposits:", error);
-      } finally {
+        console.error("Error setting up deposits listener:", error);
         setLoading(false);
+        setRefreshing(false);
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      if (depositsUnsubscribe) depositsUnsubscribe();
+      unsubscribe();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
+
+  const handleManualRefresh = async () => {
+    setRefreshing(true);
+    try {
+      const db = getFirebaseFirestore();
+      const depositsQuery = query(
+        collection(db, "deposits"),
+        orderBy("createdAt", "desc"),
+      );
+      const snapshot = await getDocs(depositsQuery);
+      const docs = snapshot.docs.map((d) => ({ id: d.id, data: d.data() }));
+      await buildAndSetDeposits(docs);
+    } catch (err) {
+      console.error("Error refreshing deposits:", err);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const handleStatusUpdate = async (
     deposit: DepositRequest,
@@ -244,7 +332,9 @@ export default function AdminDepositsPage() {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
       });
-      return displayCurrency === "USD" ? `$${formatted}` : `${displayCurrency} ${formatted}`;
+      return displayCurrency === "USD"
+        ? `$${formatted}`
+        : `${displayCurrency} ${formatted}`;
     }
   };
 
@@ -274,6 +364,17 @@ export default function AdminDepositsPage() {
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={handleManualRefresh}
+              disabled={refreshing || loading}
+              className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-slate-900 px-4 py-2 text-sm font-medium text-slate-300 transition hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50"
+              title="Refresh deposits"
+            >
+              <RefreshCw
+                className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+              />
+              {refreshing ? "Refreshing..." : "Refresh"}
+            </button>
             <Filter className="h-4 w-4 text-slate-500" />
             <select
               value={filterStatus}

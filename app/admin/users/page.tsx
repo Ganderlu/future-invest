@@ -11,6 +11,8 @@ import {
   Timestamp,
   updateDoc,
   doc,
+  runTransaction,
+  addDoc,
 } from "firebase/firestore";
 import { getFirebaseApp, getFirebaseFirestore } from "@/lib/firebaseClient";
 import AdminLayout from "@/components/admin-layout";
@@ -24,6 +26,10 @@ import {
   Mail,
   Calendar,
   MapPin,
+  Plus,
+  Minus,
+  X,
+  AlertTriangle,
 } from "lucide-react";
 
 type UserData = {
@@ -50,6 +56,150 @@ export default function AdminUsersPage() {
   const [users, setUsers] = useState<UserData[]>([]);
   const [filteredUsers, setFilteredUsers] = useState<UserData[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
+  const [balanceModal, setBalanceModal] = useState<{
+    open: boolean;
+    user: UserData | null;
+    mode: "add" | "remove";
+    amount: string;
+    note: string;
+    processing: boolean;
+    error: string;
+  }>({
+    open: false,
+    user: null,
+    mode: "add",
+    amount: "",
+    note: "",
+    processing: false,
+    error: "",
+  });
+
+  const openBalanceModal = (user: UserData, mode: "add" | "remove") => {
+    setBalanceModal({
+      open: true,
+      user,
+      mode,
+      amount: "",
+      note: "",
+      processing: false,
+      error: "",
+    });
+  };
+
+  const closeBalanceModal = () => {
+    if (balanceModal.processing) return;
+    setBalanceModal({
+      open: false,
+      user: null,
+      mode: "add",
+      amount: "",
+      note: "",
+      processing: false,
+      error: "",
+    });
+  };
+
+  const applyBalanceAdjustment = async () => {
+    if (!balanceModal.user) return;
+
+    const amountNum = parseFloat(balanceModal.amount);
+    if (isNaN(amountNum) || amountNum <= 0) {
+      setBalanceModal((s) => ({
+        ...s,
+        error: "Enter a valid amount greater than 0.",
+      }));
+      return;
+    }
+
+    const user = balanceModal.user;
+    const db = getFirebaseFirestore();
+    const userRef = doc(db, "users", user.id);
+    const adjustmentType = balanceModal.mode; // "add" | "remove"
+
+    if (
+      adjustmentType === "remove" &&
+      (user.balance || 0) < amountNum &&
+      !window.confirm(
+        `User's current balance (${formatCurrency(user.balance)}) is less than the amount to remove (${formatCurrency(amountNum)}). The user will go negative. Continue?`,
+      )
+    ) {
+      return;
+    }
+
+    let finalNewBalance = user.balance || 0;
+    let app = getFirebaseApp();
+    let adminEmail = getAuth(app).currentUser?.email || "unknown-admin";
+
+    setBalanceModal((s) => ({ ...s, processing: true, error: "" }));
+
+    try {
+      await runTransaction(db, async (transaction) => {
+        const userDoc = await transaction.get(userRef);
+        if (!userDoc.exists()) throw new Error("User no longer exists.");
+
+        const currentBalance: number =
+          typeof userDoc.data().balance === "number"
+            ? userDoc.data().balance
+            : 0;
+        const delta = adjustmentType === "add" ? amountNum : -amountNum;
+        finalNewBalance = currentBalance + delta;
+
+        transaction.update(userRef, {
+          balance: finalNewBalance,
+          lastBalanceAdjustmentAt: Timestamp.now(),
+          lastBalanceAdjustmentBy: adminEmail,
+        });
+      });
+
+      // Write an audit log (best-effort, non-fatal on failure)
+      try {
+        await addDoc(collection(db, "adminBalanceAdjustments"), {
+          userId: user.id,
+          userEmail: user.email,
+          adminEmail,
+          type: adjustmentType,
+          amount: amountNum,
+          delta: adjustmentType === "add" ? amountNum : -amountNum,
+          previousBalance: user.balance || 0,
+          newBalance: finalNewBalance,
+          note:
+            balanceModal.note || balanceModal.mode === "add"
+              ? "Manual balance credit (admin)"
+              : "Manual balance debit (admin)",
+          createdAt: Timestamp.now(),
+        });
+      } catch (logErr) {
+        console.error("Failed to write adjustment log:", logErr);
+      }
+
+      // Update local state immediately so table reflects change
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.id === user.id ? { ...u, balance: finalNewBalance } : u,
+        ),
+      );
+
+      setBalanceModal((s) => ({
+        open: false,
+        user: null,
+        mode: "add",
+        amount: "",
+        note: "",
+        processing: false,
+        error: "",
+      }));
+    } catch (err) {
+      console.error("Balance adjustment failed:", err);
+      setBalanceModal((s) => ({
+        ...s,
+        processing: false,
+        error:
+          err instanceof Error
+            ? err.message
+            : "Failed to update balance. Please try again.",
+      }));
+    }
+  };
 
   useEffect(() => {
     const app = getFirebaseApp();
@@ -243,7 +393,8 @@ export default function AdminUsersPage() {
                           <div className="flex flex-col gap-0.5">
                             <div className="flex items-center gap-1 text-xs text-slate-200">
                               <MapPin className="h-3 w-3 text-emerald-500" />
-                              {user.registrationLocation.city || "Unknown"},{" "}
+                              {user.registrationLocation.city ||
+                                "Unknown"},{" "}
                               {user.registrationLocation.country || "Unknown"}
                             </div>
                             <p className="text-[10px] text-slate-500">
@@ -268,30 +419,52 @@ export default function AdminUsersPage() {
                         </span>
                       </td>
                       <td className="whitespace-nowrap px-6 py-4 text-right">
-                        <button
-                          onClick={() => toggleUserStatus(user.id, user.status)}
-                          className={`rounded-lg p-2 transition ${
-                            user.status === "banned"
-                              ? "text-emerald-400 hover:bg-emerald-500/10"
-                              : "text-red-400 hover:bg-red-500/10"
-                          }`}
-                          title={
-                            user.status === "banned" ? "Unban User" : "Ban User"
-                          }
-                        >
-                          {user.status === "banned" ? (
-                            <CheckCircle className="h-4 w-4" />
-                          ) : (
-                            <Ban className="h-4 w-4" />
-                          )}
-                        </button>
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => openBalanceModal(user, "add")}
+                            className="inline-flex items-center gap-1 rounded-lg bg-emerald-500/10 px-2.5 py-1.5 text-xs font-semibold text-emerald-400 transition hover:bg-emerald-500/20"
+                            title="Add money to user balance"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                            Add
+                          </button>
+                          <button
+                            onClick={() => openBalanceModal(user, "remove")}
+                            className="inline-flex items-center gap-1 rounded-lg bg-amber-500/10 px-2.5 py-1.5 text-xs font-semibold text-amber-400 transition hover:bg-amber-500/20"
+                            title="Remove money from user balance"
+                          >
+                            <Minus className="h-3.5 w-3.5" />
+                            Remove
+                          </button>
+                          <button
+                            onClick={() =>
+                              toggleUserStatus(user.id, user.status)
+                            }
+                            className={`rounded-lg p-2 transition ${
+                              user.status === "banned"
+                                ? "text-emerald-400 hover:bg-emerald-500/10"
+                                : "text-red-400 hover:bg-red-500/10"
+                            }`}
+                            title={
+                              user.status === "banned"
+                                ? "Unban User"
+                                : "Ban User"
+                            }
+                          >
+                            {user.status === "banned" ? (
+                              <CheckCircle className="h-4 w-4" />
+                            ) : (
+                              <Ban className="h-4 w-4" />
+                            )}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={7}
                       className="px-6 py-12 text-center text-slate-500"
                     >
                       No users found.
@@ -302,6 +475,184 @@ export default function AdminUsersPage() {
             </table>
           </div>
         </div>
+
+        {balanceModal.open && balanceModal.user && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div
+              className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+              onClick={closeBalanceModal}
+            />
+            <div className="relative z-10 w-full max-w-md overflow-hidden rounded-2xl border border-white/10 bg-slate-900 shadow-2xl">
+              <div
+                className={`flex items-center justify-between border-b border-white/5 p-6 ${
+                  balanceModal.mode === "add" ? "" : ""
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`flex h-10 w-10 items-center justify-center rounded-xl ${
+                      balanceModal.mode === "add"
+                        ? "bg-emerald-500/15 text-emerald-400"
+                        : "bg-amber-500/15 text-amber-400"
+                    }`}
+                  >
+                    {balanceModal.mode === "add" ? (
+                      <Plus className="h-5 w-5" />
+                    ) : (
+                      <Minus className="h-5 w-5" />
+                    )}
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-slate-50">
+                      {balanceModal.mode === "add"
+                        ? "Add Money to Balance"
+                        : "Remove Money from Balance"}
+                    </h2>
+                    <p className="text-xs text-slate-500">
+                      {balanceModal.user.firstName
+                        ? `${balanceModal.user.firstName} ${balanceModal.user.lastName || ""} · `
+                        : ""}
+                      {balanceModal.user.email}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={closeBalanceModal}
+                  disabled={balanceModal.processing}
+                  className="rounded-lg p-2 text-slate-400 transition hover:bg-white/5 hover:text-slate-200 disabled:opacity-50"
+                  title="Close"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="space-y-5 p-6">
+                <div className="flex items-center justify-between rounded-xl border border-white/5 bg-slate-950/60 px-4 py-3">
+                  <span className="text-sm font-medium text-slate-400">
+                    Current Balance
+                  </span>
+                  <span className="text-lg font-bold text-slate-50">
+                    {formatCurrency(balanceModal.user.balance)}
+                  </span>
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-slate-300">
+                    Amount (USD)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={balanceModal.amount}
+                    onChange={(e) =>
+                      setBalanceModal((s) => ({
+                        ...s,
+                        amount: e.target.value,
+                        error: "",
+                      }))
+                    }
+                    placeholder="0.00"
+                    disabled={balanceModal.processing}
+                    className="block w-full rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-lg font-semibold text-slate-50 placeholder-slate-600 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:opacity-60"
+                  />
+                  {balanceModal.amount &&
+                  !isNaN(parseFloat(balanceModal.amount)) &&
+                  parseFloat(balanceModal.amount) > 0 ? (
+                    <p className="mt-2 text-xs text-slate-500">
+                      New balance after{" "}
+                      <span
+                        className={
+                          balanceModal.mode === "add"
+                            ? "font-semibold text-emerald-400"
+                            : "font-semibold text-amber-400"
+                        }
+                      >
+                        {balanceModal.mode === "add" ? "+" : "-"}
+                        {formatCurrency(parseFloat(balanceModal.amount))}
+                      </span>
+                      :{" "}
+                      <span className="font-semibold text-slate-200">
+                        {formatCurrency(
+                          (balanceModal.user.balance || 0) +
+                            (balanceModal.mode === "add" ? 1 : -1) *
+                              parseFloat(balanceModal.amount),
+                        )}
+                      </span>
+                    </p>
+                  ) : null}
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-slate-300">
+                    Note / Reason{" "}
+                    <span className="text-slate-500">(optional)</span>
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={balanceModal.note}
+                    onChange={(e) =>
+                      setBalanceModal((s) => ({ ...s, note: e.target.value }))
+                    }
+                    placeholder="e.g. Manual bonus, correction for failed deposit, etc."
+                    disabled={balanceModal.processing}
+                    className="block w-full resize-none rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-sm text-slate-200 placeholder-slate-600 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:opacity-60"
+                  />
+                </div>
+
+                {balanceModal.error && (
+                  <div className="flex items-start gap-2 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>{balanceModal.error}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-3 border-t border-white/5 bg-slate-950/40 p-6">
+                <button
+                  onClick={closeBalanceModal}
+                  disabled={balanceModal.processing}
+                  className="rounded-xl border border-white/10 bg-transparent px-5 py-2.5 text-sm font-semibold text-slate-300 transition hover:bg-white/5 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={applyBalanceAdjustment}
+                  disabled={
+                    balanceModal.processing ||
+                    !balanceModal.amount ||
+                    isNaN(parseFloat(balanceModal.amount)) ||
+                    parseFloat(balanceModal.amount) <= 0
+                  }
+                  className={`inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold text-white transition disabled:opacity-50 ${
+                    balanceModal.mode === "add"
+                      ? "bg-emerald-600 hover:bg-emerald-500"
+                      : "bg-amber-600 hover:bg-amber-500"
+                  }`}
+                >
+                  {balanceModal.processing ? (
+                    "Processing..."
+                  ) : (
+                    <>
+                      {balanceModal.mode === "add" ? (
+                        <Plus className="h-4 w-4" />
+                      ) : (
+                        <Minus className="h-4 w-4" />
+                      )}
+                      {balanceModal.mode === "add"
+                        ? "Add Money"
+                        : "Remove Money"}
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </AdminLayout>
   );
