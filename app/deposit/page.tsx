@@ -10,7 +10,6 @@ import {
   getDoc,
   onSnapshot,
   serverTimestamp,
-  Timestamp,
 } from "firebase/firestore";
 import { getFirebaseApp, getFirebaseFirestore } from "@/lib/firebaseClient";
 import DashboardLayout from "@/components/dashboard-layout";
@@ -19,7 +18,6 @@ import {
   Copy,
   CheckCircle,
   AlertCircle,
-  QrCode as QrCodeIcon,
   ArrowRight,
   Bitcoin,
   DollarSign,
@@ -42,12 +40,75 @@ type UserProfile = {
   balance?: number;
 };
 
+type DepositProgress = {
+  step: 1 | 2 | 3;
+  amount: string;
+  selectedCurrency: "BTC" | "ETH" | "USDT" | "USDT_BEP20";
+  txHash: string;
+  savedAt: number;
+};
+
+const DEPOSIT_PROGRESS_PREFIX = "deposit_progress_";
+
+function getDepositProgressKey(uid: string): string {
+  return `${DEPOSIT_PROGRESS_PREFIX}${uid}`;
+}
+
+function saveDepositProgress(
+  uid: string,
+  progress: Omit<DepositProgress, "savedAt">,
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    const data: DepositProgress = {
+      ...progress,
+      savedAt: Date.now(),
+    };
+    localStorage.setItem(getDepositProgressKey(uid), JSON.stringify(data));
+  } catch (err) {
+    console.warn("Failed to save deposit progress:", err);
+  }
+}
+
+function loadDepositProgress(
+  uid: string,
+): Omit<DepositProgress, "savedAt"> | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(getDepositProgressKey(uid));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as DepositProgress;
+    return {
+      step: parsed.step,
+      amount: parsed.amount,
+      selectedCurrency: parsed.selectedCurrency,
+      txHash: parsed.txHash,
+    };
+  } catch (err) {
+    console.warn("Failed to load deposit progress:", err);
+    return null;
+  }
+}
+
+function clearDepositProgress(uid: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(getDepositProgressKey(uid));
+  } catch (err) {
+    console.warn("Failed to clear deposit progress:", err);
+  }
+}
+
 export default function DepositPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [user, setUser] = useState<any>(null);
-  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [user, setUser] = useState<{
+    uid: string;
+    email?: string | null;
+  } | null>(null);
+  const [_profile, setProfile] = useState<UserProfile | null>(null);
+  const [progressRestored, setProgressRestored] = useState(false);
 
   // Form State
   const [amount, setAmount] = useState("");
@@ -137,6 +198,32 @@ export default function DepositPage() {
     };
   }, [router]);
 
+  useEffect(() => {
+    if (user && walletsLoaded && !loading && !progressRestored) {
+      const saved = loadDepositProgress(user.uid);
+      if (saved) {
+        if (saved.step === 2 || saved.step === 3) {
+          setAmount(saved.amount);
+          setSelectedCurrency(saved.selectedCurrency);
+          setTxHash(saved.txHash || "");
+          setStep(saved.step);
+        }
+      }
+      setProgressRestored(true);
+    }
+  }, [user, walletsLoaded, loading, progressRestored]);
+
+  useEffect(() => {
+    if (step === 2 && user && progressRestored) {
+      saveDepositProgress(user.uid, {
+        step: 2,
+        amount,
+        selectedCurrency,
+        txHash,
+      });
+    }
+  }, [txHash, step, user, progressRestored, amount, selectedCurrency]);
+
   const handleCopyAddress = () => {
     const targetWallet = walletAddresses[selectedCurrency];
     if (
@@ -149,6 +236,15 @@ export default function DepositPage() {
     navigator.clipboard.writeText(targetWallet);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+
+    if (user) {
+      saveDepositProgress(user.uid, {
+        step: 2,
+        amount,
+        selectedCurrency,
+        txHash,
+      });
+    }
   };
 
   const handleNextStep = () => {
@@ -173,6 +269,25 @@ export default function DepositPage() {
     }
     setError("");
     setStep(2);
+
+    if (user) {
+      saveDepositProgress(user.uid, {
+        step: 2,
+        amount,
+        selectedCurrency,
+        txHash: "",
+      });
+    }
+  };
+
+  const handleCancelAndBack = () => {
+    if (user) {
+      clearDepositProgress(user.uid);
+    }
+    setStep(1);
+    setAmount("");
+    setTxHash("");
+    setError("");
   };
 
   const handleSubmitDeposit = async () => {
@@ -213,6 +328,7 @@ export default function DepositPage() {
       // Update user stats (optional - usually done by backend/admin upon approval)
       // For now we just record the request
 
+      clearDepositProgress(user.uid);
       setStep(3);
     } catch (err) {
       console.error("Error creating deposit:", err);
@@ -316,19 +432,21 @@ export default function DepositPage() {
                   Select Currency
                 </label>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                  {[
-                    { id: "BTC", name: "Bitcoin", icon: Bitcoin },
-                    { id: "ETH", name: "Ethereum", icon: Wallet },
-                    { id: "USDT", name: "Tether (TRC20)", icon: DollarSign },
-                    {
-                      id: "USDT_BEP20",
-                      name: "USDT (BEP20)",
-                      icon: DollarSign,
-                    },
-                  ].map((currency) => (
+                  {(
+                    [
+                      { id: "BTC", name: "Bitcoin", icon: Bitcoin },
+                      { id: "ETH", name: "Ethereum", icon: Wallet },
+                      { id: "USDT", name: "Tether (TRC20)", icon: DollarSign },
+                      {
+                        id: "USDT_BEP20",
+                        name: "USDT (BEP20)",
+                        icon: DollarSign,
+                      },
+                    ] as const
+                  ).map((currency) => (
                     <button
                       key={currency.id}
-                      onClick={() => setSelectedCurrency(currency.id as any)}
+                      onClick={() => setSelectedCurrency(currency.id)}
                       className={`flex flex-col items-center justify-center gap-3 rounded-xl border p-6 transition-all ${
                         selectedCurrency === currency.id
                           ? "border-emerald-500 bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/50"
@@ -452,7 +570,7 @@ export default function DepositPage() {
 
               <div className="flex gap-4">
                 <button
-                  onClick={() => setStep(1)}
+                  onClick={handleCancelAndBack}
                   className="w-1/3 rounded-xl border border-white/10 bg-transparent py-4 text-sm font-semibold text-slate-300 hover:bg-white/5"
                 >
                   Back
@@ -487,13 +605,17 @@ export default function DepositPage() {
 
               <div className="mt-8 flex gap-4">
                 <button
-                  onClick={() => router.push("/dashboard")}
+                  onClick={() => {
+                    if (user) clearDepositProgress(user.uid);
+                    router.push("/dashboard");
+                  }}
                   className="rounded-xl border border-white/10 bg-slate-900 px-6 py-3 text-sm font-semibold text-slate-300 hover:bg-slate-800"
                 >
                   Go to Dashboard
                 </button>
                 <button
                   onClick={() => {
+                    if (user) clearDepositProgress(user.uid);
                     setStep(1);
                     setAmount("");
                     setTxHash("");

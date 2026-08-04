@@ -30,6 +30,8 @@ import {
   Minus,
   X,
   AlertTriangle,
+  ShieldAlert,
+  ShieldCheck,
 } from "lucide-react";
 
 type UserData = {
@@ -267,6 +269,47 @@ export default function AdminUsersPage() {
     }
   };
 
+  const toggleAdminRole = async (user: UserData) => {
+    const currentlyAdmin = user.role === "admin";
+    const action = currentlyAdmin ? "revoke admin from" : "promote to admin";
+    if (!window.confirm(`Are you sure you want to ${action} ${user.email}?`))
+      return;
+
+    const app = getFirebaseApp();
+    const actorEmail = getAuth(app).currentUser?.email || "unknown-admin";
+    const newRole: "admin" | "user" = currentlyAdmin ? "user" : "admin";
+
+    try {
+      const db = getFirebaseFirestore();
+      await updateDoc(doc(db, "users", user.id), {
+        role: newRole,
+        roleUpdatedAt: Date.now(),
+        roleUpdatedBy: actorEmail,
+      });
+
+      // Audit log (best-effort)
+      try {
+        await addDoc(collection(db, "adminRoleChanges"), {
+          targetUserId: user.id,
+          targetUserEmail: user.email,
+          previousRole: currentlyAdmin ? "admin" : user.role || "user",
+          newRole,
+          changedBy: actorEmail,
+          createdAt: Timestamp.now(),
+        });
+      } catch (logErr) {
+        console.error("Role change log write failed:", logErr);
+      }
+
+      setUsers((prev) =>
+        prev.map((u) => (u.id === user.id ? { ...u, role: newRole } : u)),
+      );
+    } catch (error) {
+      console.error("Error updating user role:", error);
+      alert("Failed to update admin role");
+    }
+  };
+
   const formatDate = (timestamp: any) => {
     if (!timestamp) return "N/A";
     const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
@@ -435,6 +478,31 @@ export default function AdminUsersPage() {
                           >
                             <Minus className="h-3.5 w-3.5" />
                             Remove
+                          </button>
+                          <button
+                            onClick={() => toggleAdminRole(user)}
+                            className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
+                              user.role === "admin"
+                                ? "bg-slate-700/60 text-slate-200 hover:bg-slate-700"
+                                : "bg-indigo-500/15 text-indigo-300 hover:bg-indigo-500/25"
+                            }`}
+                            title={
+                              user.role === "admin"
+                                ? "Demote from Admin"
+                                : "Promote to Admin"
+                            }
+                          >
+                            {user.role === "admin" ? (
+                              <>
+                                <ShieldCheck className="h-3.5 w-3.5" />
+                                Admin
+                              </>
+                            ) : (
+                              <>
+                                <ShieldAlert className="h-3.5 w-3.5" />
+                                Make Admin
+                              </>
+                            )}
                           </button>
                           <button
                             onClick={() =>

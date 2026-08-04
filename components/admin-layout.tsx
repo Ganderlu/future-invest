@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { getAuth, onAuthStateChanged, signOut } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, updateDoc, setDoc } from "firebase/firestore";
 import { getFirebaseApp, getFirebaseFirestore } from "@/lib/firebaseClient";
 import Link from "next/link";
 import {
@@ -61,6 +61,10 @@ const adminNavItems = [
   { key: "exit", label: "Logout", icon: LogOut, action: "logout" },
 ];
 
+const SUPER_ADMIN_EMAILS = new Set(
+  ["andrewbanks631@gmail.com"].map((e) => e.trim().toLowerCase()),
+);
+
 export default function AdminLayout({
   children,
 }: {
@@ -87,17 +91,70 @@ export default function AdminLayout({
       // Check if user has admin role
       try {
         const userDoc = await getDoc(doc(db, "users", currentUser.uid));
+        const email = (currentUser.email || "").trim().toLowerCase();
+        const isSuperAdmin = SUPER_ADMIN_EMAILS.has(email);
+
         if (userDoc.exists()) {
           const userData = userDoc.data();
-          if (userData.role === "admin") {
-            setAdminUser(userData);
+          const isFirestoreAdmin = userData.role === "admin";
+
+          // If this is a super-admin email but Firestore role isn't admin yet,
+          // promote the doc so role persists permanently even if the allow-list is removed.
+          if (isSuperAdmin && !isFirestoreAdmin) {
+            try {
+              await updateDoc(doc(db, "users", currentUser.uid), {
+                role: "admin",
+                promotedAt: Date.now(),
+                promotedBy: "super-admin-allowlist",
+              });
+              userData.role = "admin";
+            } catch (promoteErr) {
+              console.warn(
+                "Could not auto-promote super admin in Firestore:",
+                promoteErr,
+              );
+            }
+          }
+
+          if (isFirestoreAdmin || isSuperAdmin) {
+            setAdminUser({ ...userData, email: currentUser.email });
             setCheckingAuth(false);
           } else {
             // Not an admin, redirect to user dashboard
             router.replace("/dashboard");
           }
         } else {
-          router.replace("/login");
+          // No Firestore user document yet. If it's a super-admin email, create
+          // a minimal users doc with admin role so they're granted access.
+          if (isSuperAdmin) {
+            try {
+              await setDoc(
+                doc(db, "users", currentUser.uid),
+                {
+                  email: currentUser.email,
+                  role: "admin",
+                  firstName: "",
+                  lastName: "",
+                  balance: 0,
+                  status: "active",
+                  createdAt: Date.now(),
+                  promotedAt: Date.now(),
+                  promotedBy: "super-admin-allowlist",
+                },
+                { merge: true },
+              );
+              setAdminUser({
+                email: currentUser.email,
+                role: "admin",
+              });
+              setCheckingAuth(false);
+            } catch (createErr) {
+              console.error("Error creating super admin user doc:", createErr);
+              router.replace("/login");
+            }
+          } else {
+            router.replace("/login");
+          }
         }
       } catch (error) {
         console.error("Error verifying admin status:", error);
