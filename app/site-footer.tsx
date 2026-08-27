@@ -166,10 +166,10 @@ export function SiteFooter() {
                 <li className="flex items-center gap-2">
                   <Mail className="h-4 w-4 shrink-0 text-emerald-500" />
                   <a
-                    href="mailto:support@futureinvest.com"
+                    href="mailto:advisorsfutureinvest@gmail.com"
                     className="hover:text-emerald-400"
                   >
-                    support@futureinvest.com
+                    advisorsfutureinvest@gmail.com
                   </a>
                 </li>
               </ul>

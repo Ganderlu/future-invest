@@ -703,10 +703,10 @@ export default function Home() {
               <p>
                 Email:{" "}
                 <a
-                  href="mailto:advisors@futureinvest.com"
+                  href="mailto:advisorsfutureinvest@gmail.com"
                   className="text-emerald-300 underline underline-offset-4 hover:text-emerald-200"
                 >
-                  advisors@futureinvest.com
+                  advisorsfutureinvest@gmail.com
                 </a>
               </p>
               <p>Phone: +1 (555) 012-9876</p>

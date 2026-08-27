@@ -62,18 +62,18 @@ export default function ContactPage() {
             </h1>
             <p className="mt-4 text-sm leading-relaxed text-slate-300 sm:text-base">
               Whether you are just starting to invest or looking to refine an
-              existing strategy, our team is available to discuss your objectives,
-              constraints, and questions. Share a few details and we will connect
-              you with the right advisor.
+              existing strategy, our team is available to discuss your
+              objectives, constraints, and questions. Share a few details and we
+              will connect you with the right advisor.
             </p>
             <div className="mt-6 space-y-3 text-sm text-slate-200">
               <p>
                 Email:{" "}
                 <a
-                  href="mailto:advisors@futureinvest.com"
+                  href="mailto:advisorsfutureinvest@gmail.com"
                   className="text-emerald-300 underline underline-offset-4 hover:text-emerald-200"
                 >
-                  advisors@futureinvest.com
+                  advisorsfutureinvest@gmail.com
                 </a>
               </p>
               <p>Phone: +1 (555) 012-9876</p>
@@ -97,8 +97,8 @@ export default function ContactPage() {
                   Message Sent!
                 </h2>
                 <p className="mt-2 text-sm text-slate-400">
-                  Thank you for reaching out. An advisor will review your request
-                  and get back to you shortly.
+                  Thank you for reaching out. An advisor will review your
+                  request and get back to you shortly.
                 </p>
                 <button
                   onClick={() => setSuccess(false)}
@@ -207,8 +207,9 @@ export default function ContactPage() {
               </form>
             )}
             <p className="mt-3 text-[11px] text-slate-400">
-              This form is for informational purposes only and does not constitute
-              investment advice or an offer to buy or sell securities.
+              This form is for informational purposes only and does not
+              constitute investment advice or an offer to buy or sell
+              securities.
             </p>
           </div>
         </section>
@@ -216,4 +217,3 @@ export default function ContactPage() {
     </div>
   );
 }
-
